@@ -276,6 +276,12 @@ def cmd_cut(args):
                 "reel: don't know how to write %r. Use a .gif or .mp4 output path." % path
             )
 
+    # Validate everything cheap before spending a full decode on analysis:
+    # a typo in --crop should not cost a minute on a seven-minute capture.
+    graphmod.parse_crop(args.crop)
+    raw_cues = load_captions(args.captions) if args.captions else []
+    font = get_font(find_font(args.font)) if raw_cues else None
+
     ui.header(os.path.basename(args.input))
     ui.kv("source", _media_line(info))
     ui.kv("outputs", "  ".join(ui.white(os.path.basename(o)) for o in outputs))
@@ -302,9 +308,8 @@ def cmd_cut(args):
     overlays = []
     overlay_pngs = []
     workdir = None
-    if args.captions:
-        cues = resolve_times(load_captions(args.captions), plan)
-        font = get_font(find_font(args.font))
+    if raw_cues:
+        cues = resolve_times(raw_cues, plan)
         out_w, out_h = output_size(info, args.crop, args.width)
         workdir = tempfile.mkdtemp(prefix="reel-captions-")
         for i, cue in enumerate(cues):
