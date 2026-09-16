@@ -27,7 +27,7 @@ No pip install, no Node, no Electron. Stock Python 3 and ffmpeg.
 ## 60-second quickstart
 
 ```bash
-git clone https://github.com/neelbarmecha/reel && cd reel
+git clone https://github.com/neelbarm/reel && cd reel
 
 # 1. Look at what you recorded.
 python3 -m reel inspect ~/Desktop/recording.mov
