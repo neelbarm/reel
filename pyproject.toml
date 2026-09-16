@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reel"
+version = "0.1.0"
+description = "Turn raw screen recordings into tight, polished demo GIFs and MP4s."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Neel Barmecha" }]
+keywords = ["ffmpeg", "gif", "screen-recording", "demo", "screencast", "cli"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Utilities",
+]
+# No dependencies, deliberately: reel runs on a stock Python plus ffmpeg.
+dependencies = []
+
+[project.scripts]
+reel = "reel.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/neelbarmecha/reel"
+Issues = "https://github.com/neelbarmecha/reel/issues"
+
+[tool.setuptools]
+packages = ["reel"]
