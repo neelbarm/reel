@@ -70,6 +70,23 @@ class TestBuildPlan(unittest.TestCase):
         plan = build_plan(17.0, [(0.0, 3.0), (7.0, 12.0)])
         self.assertAlmostEqual(plan.segments[0].start, 2.75)
 
+    def test_a_recording_that_is_idle_end_to_end_keeps_its_content(self):
+        # One freeze covering the whole capture means the lead-in trim and
+        # the lead-out trim fight over the same seconds. Trimming both used
+        # to leave a quarter-second of the last frame and call it a 24x win.
+        plan = build_plan(6.0, [Freeze(0.0, 6.0)])
+        self.assertAlmostEqual(plan.segments[0].start, 0.0)
+        self.assertAlmostEqual(plan.segments[-1].end, 6.0)
+        self.assertAlmostEqual(plan.head_trim, 0.0)
+        self.assertAlmostEqual(plan.tail_trim, 0.0)
+        self.assertGreater(plan.output_duration, 0.3)
+        self.assertEqual([s.kind for s in plan.segments], [KIND_IDLE])
+
+    def test_an_all_idle_recording_still_renders_with_cut_idle(self):
+        plan = build_plan(6.0, [Freeze(0.0, 6.0)], cut_idle=True)
+        self.assertTrue(plan.segments)
+        self.assertGreater(plan.output_duration, 0.0)
+
 
 class TestTimeMapping(unittest.TestCase):
     def test_input_time_maps_through_the_speed_changes(self):

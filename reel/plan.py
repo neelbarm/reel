@@ -257,6 +257,17 @@ def build_plan(
                 tail_trim = hi - new_hi
                 hi = new_hi
 
+    if hi - lo < min_segment:
+        # The trims ate the whole recording - a capture that is dead from end
+        # to end, where the lead-in freeze *is* the lead-out freeze. Keep the
+        # original window and let the idle rules speed it up instead of
+        # shipping a quarter-second of the last frame.
+        lo = 0.0 if start is None else max(0.0, float(start))
+        hi = duration if end is None else min(duration, float(end))
+        if hi <= lo:
+            hi = duration
+        head_trim = tail_trim = 0.0
+
     # Idle stretches that survive inside the kept window.
     idle = []
     for h_lo, h_hi in holes:
