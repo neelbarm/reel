@@ -49,6 +49,39 @@ class TestFreezeParsing(unittest.TestCase):
         freezes = parse_freezedetect(log, duration=10.0)
         self.assertAlmostEqual(freezes[0].end, 10.0)
 
+    def test_freeze_duration_cannot_stretch_the_clamp(self):
+        # A container whose duration is short or wrong (VFR captures do this)
+        # used to let freeze_duration push the clamp out with it, and the
+        # freeze came back longer than the recording.
+        log = (
+            "lavfi.freezedetect.freeze_start: 1\n"
+            "lavfi.freezedetect.freeze_duration: 99\n"
+            "lavfi.freezedetect.freeze_end: 100\n"
+        )
+        freezes = parse_freezedetect(log, duration=10.0)
+        self.assertAlmostEqual(freezes[0].end, 10.0)
+
+    def test_freeze_cut_off_by_eof_uses_its_reported_duration(self):
+        log = (
+            "lavfi.freezedetect.freeze_start: 1\n"
+            "lavfi.freezedetect.freeze_duration: 3\n"
+        )
+        freezes = parse_freezedetect(log, duration=10.0)
+        self.assertEqual(len(freezes), 1)
+        self.assertAlmostEqual(freezes[0].end, 4.0)
+
+    def test_metadata_filter_style_and_exponents_parse(self):
+        # ffmpeg formats these with "%.6g", so an exponent is legal syntax,
+        # and the `metadata` filter prints key=value rather than "key: value".
+        log = (
+            "lavfi.freezedetect.freeze_start=1e-05\n"
+            "lavfi.freezedetect.freeze_end=4.5\n"
+        )
+        freezes = parse_freezedetect(log, duration=10.0)
+        self.assertEqual(len(freezes), 1)
+        self.assertAlmostEqual(freezes[0].start, 1e-05)
+        self.assertAlmostEqual(freezes[0].end, 4.5)
+
 
 class TestMergeFreezes(unittest.TestCase):
     def test_touching_freezes_become_one(self):
@@ -67,6 +100,12 @@ class TestMergeFreezes(unittest.TestCase):
 class TestSceneParsing(unittest.TestCase):
     def test_reads_pts_time(self):
         self.assertEqual(parse_showinfo_times(SHOWINFO_LOG), [3.0, 12.0, 12.3])
+
+    def test_showinfo_exponent_times_parse(self):
+        self.assertEqual(
+            parse_showinfo_times("[showinfo] n:0 pts:0 pts_time:1.5e+01 duration:300"),
+            [15.0],
+        )
 
     def test_dedupe_collapses_neighbours_and_drops_edges(self):
         self.assertEqual(dedupe_scenes([3.0, 12.0, 12.3], duration=17.0), [3.0, 12.0])

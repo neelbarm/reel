@@ -18,10 +18,14 @@ import subprocess
 
 from .probe import ffmpeg_bin
 
-FREEZE_START_RE = re.compile(r"lavfi\.freezedetect\.freeze_start[:=]\s*(-?[\d.]+)")
-FREEZE_DURATION_RE = re.compile(r"lavfi\.freezedetect\.freeze_duration[:=]\s*(-?[\d.]+)")
-FREEZE_END_RE = re.compile(r"lavfi\.freezedetect\.freeze_end[:=]\s*(-?[\d.]+)")
-PTS_TIME_RE = re.compile(r"\bpts_time:\s*(-?[\d.]+)")
+# ffmpeg formats these with "%.6g" (av_ts_make_time_string), so allow an
+# exponent as well as plain decimals, and accept both the "key: value" log
+# form and the "key=value" form the metadata filter prints.
+_NUM = r"(-?[\d.]+(?:[eE][-+]?\d+)?)"
+FREEZE_START_RE = re.compile(r"lavfi\.freezedetect\.freeze_start[:=]\s*" + _NUM)
+FREEZE_DURATION_RE = re.compile(r"lavfi\.freezedetect\.freeze_duration[:=]\s*" + _NUM)
+FREEZE_END_RE = re.compile(r"lavfi\.freezedetect\.freeze_end[:=]\s*" + _NUM)
+PTS_TIME_RE = re.compile(r"\bpts_time:\s*" + _NUM)
 
 
 class Freeze(object):
@@ -64,27 +68,34 @@ def parse_freezedetect(text, duration=None):
     """
     freezes = []
     pending = None
+    pending_end = None
     for line in text.splitlines():
         m = FREEZE_START_RE.search(line)
         if m:
-            if pending is not None and duration is not None:
-                freezes.append(Freeze(pending, duration))
+            if pending is not None:
+                tail = _tail_end(pending, pending_end, duration)
+                if tail is not None:
+                    freezes.append(Freeze(pending, tail))
             pending = float(m.group(1))
+            pending_end = None
             continue
         m = FREEZE_END_RE.search(line)
         if m and pending is not None:
             freezes.append(Freeze(pending, float(m.group(1))))
             pending = None
+            pending_end = None
             continue
         m = FREEZE_DURATION_RE.search(line)
         if m and pending is not None:
-            # Keep as a fallback end; a real freeze_end on a later line wins
-            # because we only use this when the stream ends mid-freeze.
+            # Only a fallback end for a freeze that never gets its freeze_end
+            # because the stream ended mid-freeze. A real freeze_end wins, and
+            # this must NOT move `duration`: the clamp below is what keeps a
+            # freeze inside a container whose duration says otherwise.
             pending_end = pending + float(m.group(1))
-            if duration is not None:
-                duration = max(duration, pending_end)
-    if pending is not None and duration is not None and duration > pending:
-        freezes.append(Freeze(pending, duration))
+    if pending is not None:
+        tail = _tail_end(pending, pending_end, duration)
+        if tail is not None and tail > pending:
+            freezes.append(Freeze(pending, tail))
     # freezedetect can report a start at a negative/0-ish epsilon; clamp.
     cleaned = []
     for f in freezes:
@@ -94,6 +105,15 @@ def parse_freezedetect(text, duration=None):
             cleaned.append(Freeze(start, end))
     cleaned.sort(key=lambda f: f.start)
     return merge_freezes(cleaned)
+
+
+def _tail_end(start, pending_end, duration):
+    """Where to close a freeze that never reported its own `freeze_end`."""
+    if pending_end is not None:
+        return pending_end
+    if duration is not None and duration > start:
+        return duration
+    return None
 
 
 def merge_freezes(freezes, max_gap=0.35):
