@@ -27,8 +27,8 @@ dependencies = []
 reel = "reel.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/neelbarmecha/reel"
-Issues = "https://github.com/neelbarmecha/reel/issues"
+Homepage = "https://github.com/neelbarm/reel"
+Issues = "https://github.com/neelbarm/reel/issues"
 
 [tool.setuptools]
 packages = ["reel"]

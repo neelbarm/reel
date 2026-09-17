@@ -66,14 +66,13 @@ Segments
   00:00  00:03    3.1s  idle
   00:03  00:07    3.7s  active
   00:07  00:12    5.7s  idle
-  00:12  00:15    2.2s  active
-  00:15  00:18    3.2s  active
+  00:12  00:18    5.4s  active
   00:18  00:28    9.9s  idle
 
   ● analysis
        runtime  0:27.6
-        active  0:08.0  (29%)
-          idle  0:19.6  (71%)
+        active  0:09.1  (33%)
+          idle  0:18.7  (67%)
        lead-in  0:03.1
       lead-out  0:09.9
     scene cuts  2
@@ -104,7 +103,7 @@ Edit plan
 | `reel cut raw.mov -o demo.gif` | 27.6s, 1280x800 | 10.2s GIF, 111 KB |
 | `reel cut raw.mov -o demo.gif --cut-idle` | 27.6s | 8.0s GIF |
 | `reel cut long.mov -o demo.gif --width 720 --fps 10 --cut-idle` | 7:51.1 | 34.1s GIF, 4.5 MB |
-| `reel cut raw.mov -o demo.gif -o demo.mp4` | 27.6s | both, one decode |
+| `reel cut raw.mov -o demo.gif -o demo.mp4` | 27.6s | both, one analysis |
 
 ```bash
 # Captions, as a bottom banner. Times are output seconds...
@@ -115,7 +114,8 @@ reel cut raw.mov -o demo.gif \
 reel cut raw.mov -o demo.gif \
   --captions "in:12.5-18=Auto-Mix picks the crossfades"
 
-# An .srt works too.
+# An .srt works too - its times are source times, mapped through the edit
+# for you, exactly like `in:`.
 reel cut raw.mov -o demo.gif --captions notes.srt
 
 # Crop to just the terminal pane, and preview the result.
@@ -165,8 +165,9 @@ into a single `-filter_complex`:
 ```
 
 Every segment is a `trim`+`setpts` branch and they meet at one `concat`. No
-temp clips, no stitching, no generation loss — the whole edit is one decode
-and one encode.
+temp clips, no stitching, no generation loss — the whole edit is one ffmpeg
+invocation per pass, with nothing written between them. (A GIF is two passes,
+because the palette has to be built before it can be applied; an MP4 is one.)
 
 **4. Palette optimisation.** GIF is 256 colours, and letting ffmpeg pick them
 per-frame looks like 1998. `reel` does the standard two-pass instead:
@@ -218,7 +219,7 @@ reel preview FILE           write preview.html for a finished GIF/MP4
 
 | Flag | Default | What |
 | --- | --- | --- |
-| `-o, --output PATH` | `<input>.gif` | repeat for both a `.gif` and a `.mp4` |
+| `-o, --output PATH` | `<name>.gif` in `.` | repeat for both a `.gif` and a `.mp4` |
 | `--idle-min S` | `1.5` | idle stretches at least this long get handled |
 | `--idle-speed X` | `8` | speed factor for idle stretches |
 | `--cut-idle` | | drop idle stretches entirely |
@@ -244,8 +245,9 @@ reel preview FILE           write preview.html for a finished GIF/MP4
 
 ### `inspect` / `chapters`
 
-`--json` for machine-readable output, `--ascii` for a `#`/`.`/`|` timeline,
-`--plain` for bare chapter markers.
+Both take `--json` for machine-readable output. `inspect` also takes
+`--ascii` for a `#`/`.`/`|` timeline; `chapters` also takes `--plain` for
+bare markers with no header.
 
 ## Tests
 
@@ -254,8 +256,9 @@ scripts/make_fixture.sh tests/fixtures/fixture.mov   # optional; tests do it
 python3 -m unittest discover -s tests -t .
 ```
 
-90 tests, ~9 seconds. The pure functions (planner, filtergraph builder,
-log parsers, caption grammar, TrueType rasteriser) run without ffmpeg; the
+124 tests, ~20 seconds. The pure functions (planner, filtergraph builder,
+log parsers, caption grammar, argument validation, output staging, TrueType
+rasteriser) run without ffmpeg; the
 integration tests build a 17-second synthetic screen recording with
 `lavfi` — 3s dead, 4s motion, 5s frozen, 3s of a second scene, 2s dead — and
 assert that `inspect` finds the freeze and the cut within 0.5s, that `cut`
