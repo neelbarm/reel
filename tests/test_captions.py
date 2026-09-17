@@ -10,6 +10,7 @@ from reel.captions import (
     banner_layout,
     get_font,
     load_captions,
+    overlapping_pairs,
     parse_spec,
     parse_srt,
     parse_timecode,
@@ -73,6 +74,49 @@ class TestSrt(unittest.TestCase):
         with self.assertRaises(CaptionError):
             parse_srt("not a subtitle file")
 
+    def test_a_bom_does_not_eat_the_first_cue(self):
+        # Subtitle editors love a UTF-8 BOM; the stray U+FEFF used to make
+        # cue 1's index line unparseable and the cue vanished silently.
+        path = self.write_srt(u"\ufeff" + SRT, encoding="utf-8")
+        try:
+            cues = load_captions(path)
+            self.assertEqual(len(cues), 2)
+            self.assertEqual(cues[0].text, "Import a folder")
+        finally:
+            os.unlink(path)
+
+    def test_crlf_and_multi_line_cues(self):
+        text = (
+            "1\r\n00:00:01,000 --> 00:00:04,000\r\nFirst line\r\nsecond line\r\n"
+            "\r\n2\r\n00:00:05,000 --> 00:00:07,000\r\nCafé ☕\r\n"
+        )
+        path = self.write_srt(text, encoding="utf-8")
+        try:
+            cues = load_captions(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(len(cues), 2)
+        self.assertEqual(cues[0].text, "First line second line")
+        self.assertEqual(cues[1].text, u"Café ☕")
+
+    def test_a_non_utf8_srt_gives_a_caption_error_not_a_traceback(self):
+        path = self.write_srt(
+            u"1\n00:00:00,000 --> 00:00:02,000\nCafé\n", encoding="latin-1"
+        )
+        try:
+            with self.assertRaises(CaptionError):
+                load_captions(path)
+        finally:
+            os.unlink(path)
+
+    def write_srt(self, text, encoding="utf-8"):
+        fh = tempfile.NamedTemporaryFile("wb", suffix=".srt", delete=False)
+        try:
+            fh.write(text.encode(encoding))
+        finally:
+            fh.close()
+        return fh.name
+
     def test_load_captions_from_a_file_uses_input_times(self):
         with tempfile.NamedTemporaryFile("w", suffix=".srt", delete=False) as fh:
             fh.write(SRT)
@@ -100,6 +144,18 @@ class TestResolveTimes(unittest.TestCase):
         plan = Plan([Segment(0.0, 1.0, 1.0)], 20.0)
         cues = resolve_times([Caption(15.0, 16.0, "x", input_times=True)], plan)
         self.assertGreater(cues[0].end, cues[0].start)
+
+
+class TestOverlapDetection(unittest.TestCase):
+    def test_touching_cues_do_not_count_as_overlapping(self):
+        cues = [Caption(0, 4, "a"), Caption(4, 9, "b")]
+        self.assertEqual(overlapping_pairs(cues), [])
+
+    def test_overlapping_cues_are_reported_in_time_order(self):
+        cues = [Caption(2, 7, "second"), Caption(0, 5, "first")]
+        clashes = overlapping_pairs(cues)
+        self.assertEqual(len(clashes), 1)
+        self.assertEqual((clashes[0][0].text, clashes[0][1].text), ("first", "second"))
 
 
 class TestFontLookup(unittest.TestCase):
@@ -176,6 +232,15 @@ class TestBannerLayout(unittest.TestCase):
         lines, _px, bw, _bh, _bx, _by, _r, _p = banner_layout(self.font, text, 960, 600)
         self.assertGreater(len(lines), 1)
         self.assertLessEqual(bw, 960)
+
+    def test_a_caption_taller_than_the_frame_stays_on_screen(self):
+        # An essay in a small frame wraps past the frame height; a negative
+        # y made overlay clip the first lines off the top of the GIF.
+        text = "supercalifragilistic " * 12
+        _lines, _px, bw, _bh, bx, by, _r, _p = banner_layout(self.font, text, 320, 200)
+        self.assertGreaterEqual(by, 0)
+        self.assertGreaterEqual(bx, 0)
+        self.assertLessEqual(bx + bw, 320)
 
     def test_wrap_respects_the_measured_width(self):
         lines = wrap_text(self.font, "alpha beta gamma delta", 30, 60)

@@ -174,6 +174,9 @@ def write_preview(media_path, out_path=None, title=None, pills=(), chapters=(),
     html = build_page(
         os.path.basename(media_path), title, pills, chapters, subtitle, max_width
     )
-    with open(out_path, "w") as fh:
+    # The page declares <meta charset="utf-8">, so write it as UTF-8 rather
+    # than whatever the locale happens to be (C locale on Linux is ASCII, and
+    # a unicode caption or filename would blow up mid-write).
+    with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(html)
     return out_path

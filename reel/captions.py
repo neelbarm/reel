@@ -171,11 +171,32 @@ def load_captions(spec):
     if candidate.lower().endswith(".srt") or (os.path.isfile(candidate) and "=" not in spec):
         if not os.path.isfile(candidate):
             raise CaptionError("Caption file not found: %s" % spec)
-        with open(candidate, "r") as fh:
-            # .srt times are wall-clock on the source, so treat them as input
-            # times and let the plan map them onto the edit.
-            return parse_srt(fh.read(), input_times=True)
+        # utf-8-sig, because subtitle editors love a BOM and a stray ﻿ on
+        # the first line turns cue 1 into an unparseable block. The locale
+        # encoding is never right here: .srt in the wild is UTF-8.
+        try:
+            with open(candidate, "rb") as fh:
+                text = fh.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise CaptionError(
+                "%s is not valid UTF-8. Re-save the .srt as UTF-8 and try again." % spec
+            )
+        # .srt times are wall-clock on the source, so treat them as input
+        # times and let the plan map them onto the edit.
+        return parse_srt(text, input_times=True)
     return parse_spec(spec)
+
+
+def overlapping_pairs(cues):
+    """Pure: pairs of cues that are on screen at the same time.
+
+    Two banners live at the same place in the frame, so an overlap renders as
+    one stacked on top of the other. Worth telling the user about.
+    """
+    ordered = sorted(cues, key=lambda c: (c.start, c.end))
+    return [
+        (a, b) for a, b in zip(ordered, ordered[1:]) if b.start < a.end - 1e-6
+    ]
 
 
 def resolve_times(captions, plan=None):
@@ -225,8 +246,10 @@ def banner_layout(font, text, frame_w, frame_h):
     text_w = max(font.text_width(line, font_px) for line in lines)
     box_w = int(round(min(frame_w * MAX_WIDTH, text_w + 2 * pad_x)))
     box_h = int(round(step * (len(lines) - 1) + line_h + 2 * pad_y))
-    box_x = int(round((frame_w - box_w) / 2.0))
-    box_y = int(round(frame_h - frame_h * MARGIN_B - box_h))
+    box_x = max(0, int(round((frame_w - box_w) / 2.0)))
+    # A caption long enough to wrap past the frame height would otherwise get
+    # a negative y, i.e. overlay would clip its first lines off the top.
+    box_y = max(0, int(round(frame_h - frame_h * MARGIN_B - box_h)))
     radius = max(4, int(round(box_h * 0.24)))
     return lines, font_px, box_w, box_h, box_x, box_y, radius, pad_x
 
