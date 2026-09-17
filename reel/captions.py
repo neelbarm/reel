@@ -171,7 +171,7 @@ def load_captions(spec):
     if candidate.lower().endswith(".srt") or (os.path.isfile(candidate) and "=" not in spec):
         if not os.path.isfile(candidate):
             raise CaptionError("Caption file not found: %s" % spec)
-        # utf-8-sig, because subtitle editors love a BOM and a stray ﻿ on
+        # utf-8-sig, because subtitle editors love a BOM and a stray U+FEFF on
         # the first line turns cue 1 into an unparseable block. The locale
         # encoding is never right here: .srt in the wild is UTF-8.
         try:
