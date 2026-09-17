@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 
+import contextlib
 import math
 import os
 import shutil
@@ -86,6 +87,36 @@ def run_ffmpeg(cmd, total_seconds=0.0, label="render", verbose=False, dry_run=Fa
     return stderr
 
 
+@contextlib.contextmanager
+def staged_output(path, dry_run=False):
+    """Yield a sibling temp path that is moved onto `path` only on success.
+
+    ffmpeg writes its container header the moment it starts, so a failed
+    pass - or a Ctrl-C halfway through a slow GIF - would otherwise leave a
+    truncated file exactly where the user expects a finished one, and would
+    have already clobbered the previous take.
+    """
+    if dry_run:
+        yield path
+        return
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(
+        prefix=".reel-", suffix=os.path.splitext(path)[1] or ".tmp", dir=directory
+    )
+    os.close(fd)
+    try:
+        yield tmp
+    except BaseException:
+        # BaseException, not Exception: KeyboardInterrupt is the whole point.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    else:
+        os.replace(tmp, path)
+
+
 def _common_input(threads, path, extra_inputs=()):
     cmd = [
         ffmpeg_bin(),
@@ -142,12 +173,13 @@ def render_gif(src, out_path, base_graph, total_seconds, threads=2, max_colors=2
     workdir = tempfile.mkdtemp(prefix="reel-palette-")
     palette_path = os.path.join(workdir, "palette.png")
     try:
-        pass1, pass2 = build_gif_commands(
-            src, out_path, base_graph, palette_path, threads, max_colors,
-            dither, bayer_scale, loop, overlay_pngs,
-        )
-        run_ffmpeg(pass1, total_seconds, "palette", verbose, dry_run)
-        run_ffmpeg(pass2, total_seconds, "gif", verbose, dry_run)
+        with staged_output(out_path, dry_run) as staged:
+            pass1, pass2 = build_gif_commands(
+                src, staged, base_graph, palette_path, threads, max_colors,
+                dither, bayer_scale, loop, overlay_pngs,
+            )
+            run_ffmpeg(pass1, total_seconds, "palette", verbose, dry_run)
+            run_ffmpeg(pass2, total_seconds, "gif", verbose, dry_run)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -172,8 +204,9 @@ def build_mp4_command(src, out_path, base_graph, threads=2, crf=20, preset="very
 
 def render_mp4(src, out_path, base_graph, total_seconds, threads=2, crf=20,
                preset="veryfast", verbose=False, dry_run=False, overlay_pngs=()):
-    cmd = build_mp4_command(src, out_path, base_graph, threads, crf, preset, overlay_pngs)
-    run_ffmpeg(cmd, total_seconds, "mp4", verbose, dry_run)
+    with staged_output(out_path, dry_run) as staged:
+        cmd = build_mp4_command(src, staged, base_graph, threads, crf, preset, overlay_pngs)
+        run_ffmpeg(cmd, total_seconds, "mp4", verbose, dry_run)
 
 
 # ------------------------------------------------------------- storyboard --
@@ -268,12 +301,13 @@ def render_storyboard(src, out_path, timestamps, fontfile, thumb_width=420,
         if not made:
             raise RenderError("Could not extract any frames for the storyboard.")
         cols, rows = grid_for(len(made), max_cols)
-        run_ffmpeg(
-            build_tile_command(
-                os.path.join(workdir, "f_%03d.png"), out_path, cols, rows, threads=threads
-            ),
-            0.0, "sheet", verbose, dry_run, show_progress=False,
-        )
+        with staged_output(out_path, dry_run) as staged:
+            run_ffmpeg(
+                build_tile_command(
+                    os.path.join(workdir, "f_%03d.png"), staged, cols, rows, threads=threads
+                ),
+                0.0, "sheet", verbose, dry_run, show_progress=False,
+            )
         return cols, rows
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
