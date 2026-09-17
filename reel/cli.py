@@ -12,7 +12,8 @@ import tempfile
 from . import __version__, analyze as analyzemod, graph as graphmod, preview as previewmod
 from . import ui
 from .captions import (
-    CaptionError, get_font, load_captions, render_banner, resolve_times,
+    CaptionError, get_font, load_captions, overlapping_pairs, render_banner,
+    resolve_times,
 )
 from .fonts import FontNotFound, find_font, available_fonts
 from .textrender import FontError
@@ -135,10 +136,11 @@ def build_parser():
     return parser
 
 
-def _setup(args):
+def _setup(args, need_tools=True):
     if getattr(args, "no_color", False):
         ui.set_color(False)
-    require_tools()
+    if need_tools:
+        require_tools()
 
 
 def _analysis(args, info):
@@ -178,6 +180,55 @@ def output_size(info, crop=None, width=960):
     out_h = int(round(src_h * out_w / float(src_w)))
     out_h -= out_h % 2
     return max(2, out_w), max(2, out_h)
+
+
+def check_crop_fits(crop, width, height):
+    """Raise unless the crop rectangle is fully inside a width x height frame.
+
+    ffmpeg is no help here: a too-big `crop` dies with "Invalid too big or non
+    positive size", and a crop that only pokes out on one side is silently
+    slid back inside the frame, so you get a different region than you asked
+    for. Both are worth catching before the analysis decode.
+    """
+    if not crop:
+        return
+    spec = graphmod.parse_crop(crop)
+    if not width or not height:
+        return
+    w, h, x, y = [int(v) for v in spec[len("crop="):].split(":")]
+    if x + w > width or y + h > height:
+        raise graphmod.GraphError(
+            "--crop %s does not fit inside the %dx%d source: it needs %dx%d.\n"
+            "Pass x:y:w:h with x+w <= %d and y+h <= %d."
+            % (crop, width, height, x + w, y + h, width, height)
+        )
+
+
+def check_edit_args(args, duration):
+    """Cheap sanity checks on the numeric flags, before anything expensive."""
+    def bad(message):
+        raise SystemExit("reel: " + message)
+
+    if args.start is not None:
+        if args.start < 0:
+            bad("--start must not be negative.")
+        if duration and args.start >= duration:
+            bad("--start %g is at or past the end of this %s recording."
+                % (args.start, ui.human_duration(duration)))
+    if args.end is not None and args.end <= 0:
+        bad("--end must be greater than 0.")
+    if args.start is not None and args.end is not None and args.end <= args.start:
+        bad("--end %g must be later than --start %g." % (args.end, args.start))
+    if args.speed <= 0:
+        bad("--speed must be greater than 0 (1 is normal speed).")
+    if args.idle_speed <= 0:
+        bad("--idle-speed must be greater than 0 (use --cut-idle to drop idle).")
+    if args.fps < 0:
+        bad("--fps must not be negative (0 keeps the source frame rate).")
+    if args.width < 0:
+        bad("--width must not be negative (0 keeps the source width).")
+    if not 4 <= args.colors <= 256:
+        bad("--colors must be between 4 and 256, got %d." % args.colors)
 
 
 def _media_line(info):
@@ -278,7 +329,8 @@ def cmd_cut(args):
 
     # Validate everything cheap before spending a full decode on analysis:
     # a typo in --crop should not cost a minute on a seven-minute capture.
-    graphmod.parse_crop(args.crop)
+    check_crop_fits(args.crop, info.width, info.height)
+    check_edit_args(args, info.duration)
     raw_cues = load_captions(args.captions) if args.captions else []
     font = get_font(find_font(args.font)) if raw_cues else None
 
@@ -310,6 +362,13 @@ def cmd_cut(args):
     workdir = None
     if raw_cues:
         cues = resolve_times(raw_cues, plan)
+        clashes = overlapping_pairs(cues)
+        if clashes:
+            ui.warning(
+                "%d caption pair(s) are on screen at once (%r over %r); "
+                "banners share the same spot and will stack."
+                % (len(clashes), clashes[0][1].text, clashes[0][0].text)
+            )
         out_w, out_h = output_size(info, args.crop, args.width)
         workdir = tempfile.mkdtemp(prefix="reel-captions-")
         for i, cue in enumerate(cues):
@@ -541,7 +600,9 @@ def cmd_chapters(args):
 
 
 def cmd_preview(args):
-    _setup(args)
+    # No ffmpeg needed: this only writes an HTML page. ffprobe is used below
+    # if it happens to be there, purely to add the duration/size pills.
+    _setup(args, need_tools=False)
     if not os.path.isfile(args.input):
         raise SystemExit("reel: no such file: %s" % args.input)
     chapters = []

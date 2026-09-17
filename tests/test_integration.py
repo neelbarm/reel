@@ -199,6 +199,28 @@ class TestOtherCommands(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("gif", (err + _out).lower())
 
+    def test_a_failed_render_does_not_clobber_the_previous_output(self):
+        target = os.path.join(self.workdir, "keep.mp4")
+        with open(target, "w") as fh:
+            fh.write("yesterday's good take")
+        code, _out, _err = run_reel(
+            "cut", self.fixture, "-o", target, "--preset", "not-a-real-preset",
+            "--width", "320",
+        )
+        self.assertNotEqual(code, 0)
+        with open(target) as fh:
+            self.assertEqual(fh.read(), "yesterday's good take")
+        leftovers = [f for f in os.listdir(self.workdir) if f.startswith(".reel-")]
+        self.assertEqual(leftovers, [])
+
+    def test_crop_outside_the_frame_is_rejected_before_rendering(self):
+        code, out, err = run_reel(
+            "cut", self.fixture, "-o", os.path.join(self.workdir, "crop.gif"),
+            "--crop", "0:0:5000:5000",
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("does not fit", err + out)
+
     def test_missing_input_fails_cleanly(self):
         code, _out, err = run_reel("inspect", "/no/such/file.mov")
         self.assertNotEqual(code, 0)
