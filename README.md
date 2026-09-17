@@ -4,6 +4,8 @@
 
 ![reel](docs/demo.gif)
 
+![reel in the terminal](docs/demo-terminal.gif)
+
 ## Why
 
 Raw screen recordings are 90% waiting. You hit record, find the window, click
